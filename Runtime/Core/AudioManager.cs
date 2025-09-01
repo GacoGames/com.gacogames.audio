@@ -19,16 +19,19 @@ namespace GacoGames.Audio
         [Header("Mixer Routing")]
         [SerializeField] private AudioMixerGroup bgm;
         [SerializeField] private AudioMixerGroup sfx;
+        [SerializeField] private AudioMixerGroup footstep;
         [SerializeField] private AudioMixerGroup voice;
         [SerializeField] private AudioMixerGroup ui;
 
         private int sfxMaxChannel = 16;
         private int voiceMaxChannel = 8;
+        private int footstepMaxChannel = 8;
         private int uiMaxChannel = 8;
 
         public BgmGateway BGM { get; private set; }
         public SnapshotGateway Snapshots { get; private set; }
         public SfxGateway SFX { get; private set; }
+        public SfxGateway Footstep { get; private set; }
         public SfxGateway Voice { get; private set; }
         public SfxGateway UI { get; private set; }
 
@@ -54,6 +57,7 @@ namespace GacoGames.Audio
             BGM = new BgmGateway(this, bgm);
             Snapshots = new SnapshotGateway(this, audioMixer);
             SFX = new SfxGateway(this, sfx, sfxMaxChannel);
+            Footstep = new SfxGateway(this, footstep, footstepMaxChannel);
             Voice = new SfxGateway(this, voice, voiceMaxChannel);
             UI = new SfxGateway(this, ui, uiMaxChannel);
 
@@ -79,6 +83,7 @@ namespace GacoGames.Audio
             if (Instance == this) Instance = null;
             BGM?.Dispose();
             SFX?.Dispose();
+            Footstep?.Dispose();
             Voice?.Dispose();
             UI?.Dispose();
         }
