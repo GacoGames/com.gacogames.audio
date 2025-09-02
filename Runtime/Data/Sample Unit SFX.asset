@@ -12,4 +12,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 58632d7078267e04fa02c3fa392698e4, type: 3}
   m_Name: Sample Unit SFX
   m_EditorClassIdentifier: 
-  allSfx: []
+  attenuation: {fileID: 0}
+  allSfx:
+  - id: 
+    overrideAttn: {fileID: 0}
+    audioClips: []

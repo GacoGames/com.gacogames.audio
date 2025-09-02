@@ -88,7 +88,7 @@ namespace GacoGames.Audio
                         sfxDictionary.Add(sfx.id, new UnitSFXData
                         {
                             id = sfx.id,
-                            type = sfx.type,
+                            overrideAttn = sfx.overrideAttn != null ? sfx.overrideAttn : database.attenuation,
                             audioClips = sfx.audioClips
                         });
                     }
@@ -100,28 +100,17 @@ namespace GacoGames.Audio
         {
             if (sfxDictionary.TryGetValue(id, out var sfx))
             {
-                var audioRoute = sfx.type switch
-                {
-                    UnitSfxType.Sfx => AudioManager.Instance.SFX,
-                    UnitSfxType.Voice => AudioManager.Instance.Voice,
-                    _ => null
-                };
-
                 foreach (var audioEntry in sfx.audioClips)
                 {
-                    PlaySfxTimeline(audioEntry, audioRoute).Forget();
+                    PlaySfxTimeline(audioEntry, AudioManager.Instance.SFX, sfx.overrideAttn).Forget();
                 }
             }
         }
-        private async UniTask PlaySfxTimeline(UnitSFXAudioEntry entry, IAudioGateway audioRoute)
+        private async UniTask PlaySfxTimeline(UnitSFXAudioEntry entry, SfxGateway audioRoute, AudioSource attenuation)
         {
-            if (entry.time > 0f)
-                await UniTask.Delay(entry.time);
-
-            audioRoute.Play3D(entry.clip, transform.position, entry.vol);
+            if (entry.time > 0f) await UniTask.Delay(entry.time);
+            audioRoute.Play3DWithAttenuation(entry.clip, transform.position, attenuation, entry.vol);
         }
-
-        public enum UnitSfxType { Sfx, Voice }
     }
 
     [System.Serializable]
@@ -130,22 +119,15 @@ namespace GacoGames.Audio
         [TableColumnWidth(200)]
         public string id;
         [TableColumnWidth(60)]
-        public UnitSFX.UnitSfxType type;
+        public AudioSource overrideAttn;
         [TableColumnWidth(500)]
         public List<UnitSFXAudioEntry> audioClips;
         [TableColumnWidth(10), Button("▶")]
         public void PlayAudioClip()
         {
-            var audioRoute = type switch
-            {
-                UnitSFX.UnitSfxType.Sfx => AudioManager.Instance.SFX,
-                UnitSFX.UnitSfxType.Voice => AudioManager.Instance.Voice,
-                _ => null
-            };
-
             foreach (var audioEntry in audioClips)
             {
-                PlaySfxTimeline(audioEntry, audioRoute).Forget();
+                PlaySfxTimeline(audioEntry, AudioManager.Instance.SFX).Forget();
             }
         }
         private async UniTask PlaySfxTimeline(UnitSFXAudioEntry entry, IAudioGateway audioRoute)

@@ -88,6 +88,7 @@ namespace GacoGames.Audio
                         voiceDictionary.Add(voice.id, new UnitVoiceData
                         {
                             id = voice.id,
+                            overrideAttn = voice.overrideAttn!=null? voice.overrideAttn : database.attenuation,
                             audioClips = voice.audioClips
                         });
                     }
@@ -101,16 +102,14 @@ namespace GacoGames.Audio
             {
                 foreach (var audioEntry in voice.audioClips)
                 {
-                    PlayVoiceTimeline(audioEntry, AudioManager.Instance.Voice).Forget();
+                    PlayVoiceTimeline(audioEntry, AudioManager.Instance.Voice, voice.overrideAttn).Forget();
                 }
             }
         }
-        private async UniTask PlayVoiceTimeline(UnitVoiceAudioEntry entry, IAudioGateway audioRoute)
+        private async UniTask PlayVoiceTimeline(UnitVoiceAudioEntry entry, SfxGateway audioRoute, AudioSource attenuation)
         {
-            if (entry.time > 0f)
-                await UniTask.Delay(entry.time);
-
-            audioRoute.Play3D(entry.clip, transform.position, entry.vol);
+            if (entry.time > 0f) await UniTask.Delay(entry.time);
+            audioRoute.Play3DWithAttenuation(entry.clip, transform.position, attenuation, entry.vol);
         }
 
         public enum UnitSfxType { Sfx, Voice }
@@ -121,6 +120,8 @@ namespace GacoGames.Audio
     {
         [TableColumnWidth(200)]
         public string id;
+        [TableColumnWidth(60)]
+        public AudioSource overrideAttn;
         [TableColumnWidth(500)]
         public List<UnitVoiceAudioEntry> audioClips;
         [TableColumnWidth(10), Button("▶")]
