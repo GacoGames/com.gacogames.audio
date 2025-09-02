@@ -81,6 +81,12 @@ namespace GacoGames.Audio
             var token = _runner.GetCancellationTokenOnDestroy();
             CoPlay3D(clipRef, worldPos, volume, pitch, spatialBlend, token).Forget();
         }
+        public void Play3DWithAttenuation(AssetReferenceT<AudioResource> clipRef, Vector3 position, AudioSource attenuationTemplate, float volume = 1f, float pitch = 1f)
+        {
+            if (!AudioManager.AddressValid(clipRef)) return;
+            var token = _runner.GetCancellationTokenOnDestroy();
+            CoPlayWithAttenuationTemplate(clipRef, position, attenuationTemplate, volume, pitch, token).Forget();
+        }
         public void PlayOnAudioSource(AudioSource src, AssetReferenceT<AudioResource> clipRef, float volume = 1f, float pitch = 1f, float spatialBlend = 1f)
         {
             if (!AudioManager.AddressValid(clipRef)) return;
@@ -89,7 +95,6 @@ namespace GacoGames.Audio
             var token = _runner.GetCancellationTokenOnDestroy();
             CoPlayOnAudioSource(src, clipRef, volume, pitch, spatialBlend, token).Forget();
         }
-
         public void Play2D(AssetReferenceT<AudioResource> clip, float volume)
         {
             Play2D(clip, volume, 1f);
@@ -110,6 +115,27 @@ namespace GacoGames.Audio
         public UniTask PlayOnAudioSourceAsync(AudioSource src, AssetReferenceT<AudioResource> clipRef, float volume = 1f, float pitch = 1f, float spatialBlend = 1f, CancellationToken token = default)
             => CoPlayOnAudioSource(src, clipRef, volume, pitch, spatialBlend, token);
         */
+        private void ApplyAttenuation(AudioSource target, AudioSource template)
+        {
+            if (template == null || target == null) return;
+
+            // Spatial and attenuation
+            target.spatialBlend = template.spatialBlend;
+            target.minDistance = template.minDistance;
+            target.maxDistance = template.maxDistance;
+            target.dopplerLevel = template.dopplerLevel;
+            target.spread = template.spread;
+            target.rolloffMode = template.rolloffMode;
+
+            // Custom curve types
+            target.SetCustomCurve(AudioSourceCurveType.CustomRolloff, template.GetCustomCurve(AudioSourceCurveType.CustomRolloff));
+            target.SetCustomCurve(AudioSourceCurveType.Spread, template.GetCustomCurve(AudioSourceCurveType.Spread));
+            target.SetCustomCurve(AudioSourceCurveType.ReverbZoneMix, template.GetCustomCurve(AudioSourceCurveType.ReverbZoneMix));
+
+            // Reverb
+            target.reverbZoneMix = template.reverbZoneMix;
+        }
+
 
         public IEnumerator Preload(AssetReferenceT<AudioResource> clipRef)
         {
@@ -178,6 +204,22 @@ namespace GacoGames.Audio
             src.resource = h.Result;
             src.Play();
         }
+        private async UniTaskVoid CoPlayWithAttenuationTemplate(AssetReferenceT<AudioResource> clipRef, Vector3 position, AudioSource attenuationTemplate, float volume, float pitch, CancellationToken token)
+        {
+            var handle = await LoadHandleAsync(clipRef, token);
+            if (!handle.HasValue || token.IsCancellationRequested) return;
+
+            var src = NextAudioSlot();
+            src.transform.position = position;
+
+            ApplyAttenuation(src, attenuationTemplate); // ✅ this does the magic
+
+            src.pitch = Mathf.Clamp(pitch, -3f, 3f);
+            src.volume = Mathf.Clamp01(volume);
+            src.resource = handle.Value.Result;
+            src.Play();
+        }
+
         private async UniTask CoPlayOnAudioSource(AudioSource external, AssetReferenceT<AudioResource> clipRef, float volume, float pitch, float spatialBlend, CancellationToken token)
         {
             if (external == null) return;
@@ -202,7 +244,6 @@ namespace GacoGames.Audio
             external.resource = h.Result;
             external.Play();
         }
-
 
         public void Dispose()
         {
