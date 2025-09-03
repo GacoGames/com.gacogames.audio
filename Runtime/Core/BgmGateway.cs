@@ -263,6 +263,7 @@ namespace GacoGames.Audio
             }
         }
 
+        [System.Serializable]
         public struct FadeSettings
         {
             public float Duration;
