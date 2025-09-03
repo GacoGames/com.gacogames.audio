@@ -61,6 +61,15 @@ namespace GacoGames.Audio
 
         // ---------------- Core API ----------------
 
+        public void ClearSnapshot(float transitionSeconds = 0.15f)
+        {
+            _environmentSnapshot = DefaultSnapshot;
+            _environmentWeight = 1f;
+            _gameStateSnapshot = null;
+            _gameStateWeight = 0f;
+            Rebuild(transitionSeconds);
+        }
+
         /// <summary>Set the environment snapshot and its weight.</summary>
         public void SetEnvironment(AudioMixerSnapshot snapshot, float weight = 1f, float transitionSeconds = 0.30f)
         {
