@@ -33,6 +33,11 @@ namespace GacoGames.Audio
         {
             AudioManager.Instance.BGM.ClearOverride(crossFade);
         }
+        [Button]
+        public void ClearAllBgm()
+        {
+            AudioManager.Instance.BGM.StopAll(crossFade);
+        }
 
         private void ChangeMainBgm()
         {
