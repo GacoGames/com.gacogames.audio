@@ -1,37 +1,32 @@
 using System;
-using System.Collections.Generic;
-using System.Threading;
 using Cysharp.Threading.Tasks;
+using DG.Tweening;
 using UnityEngine;
 using UnityEngine.Audio;
 using UnityEngine.AddressableAssets;
-using UnityEngine.ResourceManagement.AsyncOperations;
+using System.Threading;
 
 namespace GacoGames.Audio
 {
-    /// <summary>
-    /// Non-Mono gateway that manages BGM playback (Main + Override) with Addressables pin/unpin and fades.
-    /// </summary>
-    [System.Serializable]
+    [Serializable]
     public sealed class BgmGateway : IDisposable, IAudioGateway
     {
-        private MonoBehaviour _runner; // used for coroutines
-        private AudioMixerGroup _bgmGroup;
-        private float _defaultVolume = 1f;
-        private bool _loop = true;
+        private readonly MonoBehaviour _runner;
+        private readonly AudioMixerGroup _bgmGroup;
+        private readonly float _defaultVolume = 1f;
+        private readonly bool _loop = true;
 
         private AudioSource _mainSrc;
         private AudioSource _overrideSrc;
 
-        private class CacheEntry { public AsyncOperationHandle<AudioResource> handle; public int pins; }
-        private Dictionary<string, CacheEntry> _cache = new();
-
-        [SerializeField]
-        private string _currentMainKey;
-        [SerializeField]
-        private string _currentOverrideKey;
-
+        private Tweener _mainTween;
+        private Tweener _overrideTween;
         private CancellationToken _destroyToken;
+
+        public enum OverrideMainBehavior { ContinueMuted, Pause }
+
+        public bool IsOverrideActive =>
+            _overrideSrc != null && _overrideSrc.isPlaying && _overrideSrc.volume > 0.0001f;
 
         public BgmGateway(MonoBehaviour runner, AudioMixerGroup bgmGroup)
         {
@@ -41,177 +36,124 @@ namespace GacoGames.Audio
             EnsureSources();
         }
 
-        public enum OverrideMainBehavior { ContinueMuted, Pause }
-        public bool IsOverrideActive => _overrideSrc != null && _overrideSrc.isPlaying && _overrideSrc.volume > 0f;
-
-        public async UniTask Preload(AssetReferenceT<AudioResource> clipRef)
+        public void PlayMain(AssetReferenceT<AudioResource> clipRef, FadeSettings fade, bool restartIfSame = false, float targetVolume = -1f)
         {
-            var key = KeyOf(clipRef);
-            if (_cache.TryGetValue(key, out var entry)) { entry.pins++; return; }
+            if (targetVolume < 0f) targetVolume = _defaultVolume;
+            CoPlayMain(clipRef, fade, Mathf.Clamp01(targetVolume)).Forget();
+        }
+
+        public void PlayOverride(AssetReferenceT<AudioResource> clipRef) => PlayOverride(clipRef, FadeSettings.Quick);
+
+        public void PlayOverride(AssetReferenceT<AudioResource> clipRef, FadeSettings fadeIn, OverrideMainBehavior mainBehavior = OverrideMainBehavior.ContinueMuted, float targetVolume = -1f)
+        {
+            if (targetVolume < 0f) targetVolume = _defaultVolume;
+            CoPlayOverride(clipRef, fadeIn, mainBehavior, Mathf.Clamp01(targetVolume)).Forget();
+        }
+
+        public void ClearOverride() => ClearOverride(FadeSettings.Quick);
+
+        public void ClearOverride(FadeSettings fadeOut, float resumeMainToVolume = 1f)
+        {
+            CoClearOverride(fadeOut, Mathf.Clamp01(resumeMainToVolume)).Forget();
+        }
+
+        public void StopAll() => StopAll(FadeSettings.Quick);
+
+        public void StopAll(FadeSettings fadeOut) => CoStopAll(fadeOut).Forget();
+
+        private async UniTaskVoid CoPlayMain(AssetReferenceT<AudioResource> clipRef, FadeSettings fade, float targetVol)
+        {
+            EnsureSources();
 
             var handle = Addressables.LoadAssetAsync<AudioResource>(clipRef);
             await handle.Task.AsUniTask().AttachExternalCancellation(_destroyToken);
-            if (handle.Status != AsyncOperationStatus.Succeeded)
-                throw new Exception($"BGM preload failed: {clipRef}");
-            _cache[key] = new CacheEntry { handle = handle, pins = 1 };
+            if (handle.Status != UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationStatus.Succeeded) return;
+
+            _mainSrc.resource = handle.Result;
+            _mainSrc.loop = _loop;
+            _mainSrc.Play();
+
+            await FadeMainTo(targetVol, fade);
         }
 
-        public void Release(AssetReferenceT<AudioResource> clipRef)
+        private async UniTaskVoid CoPlayOverride(AssetReferenceT<AudioResource> clipRef, FadeSettings fadeIn, OverrideMainBehavior mainBehavior, float targetVol)
         {
-            var key = KeyOf(clipRef);
-            Unpin(key);
+            EnsureSources();
+
+            await FadeMainTo(0f, fadeIn);
+            if (mainBehavior == OverrideMainBehavior.Pause) _mainSrc.Pause();
+
+            var handle = Addressables.LoadAssetAsync<AudioResource>(clipRef);
+            await handle.Task.AsUniTask().AttachExternalCancellation(_destroyToken);
+            if (handle.Status != UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationStatus.Succeeded) return;
+
+            _overrideSrc.resource = handle.Result;
+            _overrideSrc.loop = _loop;
+            _overrideSrc.volume = 0f;
+            _overrideSrc.Play();
+
+            await FadeOverrideTo(targetVol, fadeIn);
         }
 
-        public void PlayMain(AssetReferenceT<AudioResource> clipRef)
+        private async UniTaskVoid CoClearOverride(FadeSettings fadeOut, float resumeVol)
         {
-            PlayMain(clipRef, FadeSettings.Quick);
-        }
-        public void PlayMain(AssetReferenceT<AudioResource> clipRef, FadeSettings fade, bool restartIfSame = false, float targetVolume = -1f)
-        {
-            if (!AudioManager.AddressValid(clipRef)) return;
+            if (_overrideSrc != null && _overrideSrc.isPlaying)
+            {
+                await FadeOverrideTo(0f, fadeOut);
+                _overrideSrc.Stop();
+            }
 
-            if (targetVolume < 0f) targetVolume = _defaultVolume;
-            CoPlayMain(clipRef, fade, restartIfSame, targetVolume).Forget();
+            _mainSrc.UnPause();
+            await FadeMainTo(resumeVol, FadeSettings.Medium);
         }
-
-        public void PlayOverride(AssetReferenceT<AudioResource> clipRef)
-        {
-            PlayOverride(clipRef, FadeSettings.Quick);
-        }
-        public void PlayOverride(AssetReferenceT<AudioResource> clipRef, FadeSettings fadeIn, OverrideMainBehavior mainBehavior = OverrideMainBehavior.ContinueMuted, float targetVolume = -1f)
-        {
-            if (!AudioManager.AddressValid(clipRef)) return;
-
-            if (targetVolume < 0f) targetVolume = _defaultVolume;
-            CoPlayOverride(clipRef, fadeIn, mainBehavior, targetVolume).Forget();
-        }
-
-        public void ClearOverride()
-        {
-            ClearOverride(BgmGateway.FadeSettings.Quick);
-        }
-        public void ClearOverride(FadeSettings fadeOut, float resumeMainToVolume = -1f)
-        {
-            if (resumeMainToVolume < 0f) resumeMainToVolume = _defaultVolume;
-            CoClearOverride(fadeOut, resumeMainToVolume).Forget();
-        }
-
-        public void StopAll()
-        {
-            StopAll(FadeSettings.Quick);
-        }
-        public void StopAll(FadeSettings fadeOut)
-        {
-            CoStopAll(fadeOut).Forget();
-        }
-
 
         private async UniTaskVoid CoStopAll(FadeSettings fadeOut)
         {
             EnsureSources();
 
-            var fadeMain = FadeVolume(_mainSrc, _mainSrc.volume, 0f, fadeOut)
-                .ContinueWith(() => _mainSrc.Stop());
+            await FadeMainTo(0f, fadeOut);
+            _mainSrc.Stop();
 
-            var fadeOverride = FadeVolume(_overrideSrc, _overrideSrc.volume, 0f, fadeOut)
-                .ContinueWith(() => _overrideSrc.Stop());
-
-            await UniTask.WhenAll(fadeMain, fadeOverride);
+            await FadeOverrideTo(0f, fadeOut);
+            _overrideSrc.Stop();
         }
 
-
-        private async UniTaskVoid CoPlayMain(AssetReferenceT<AudioResource> clipRef, FadeSettings fade, bool restartIfSame, float targetVol)
+        private async UniTask FadeMainTo(float to, FadeSettings fade)
         {
-            EnsureSources();
-            var key = KeyOf(clipRef);
+            await FadeWithTracking(_mainSrc, to, fade, t => _mainTween = t);
+        }
 
-            if (!restartIfSame && _currentMainKey == key && _mainSrc.clip != null)
+        private async UniTask FadeOverrideTo(float to, FadeSettings fade)
+        {
+            await FadeWithTracking(_overrideSrc, to, fade, t => _overrideTween = t);
+        }
+
+        private async UniTask FadeWithTracking(AudioSource src, float to, FadeSettings fade, Action<Tweener> setTween)
+        {
+            if (src == null) return;
+
+            setTween?.Invoke(null);
+
+            if (fade.IsInstant)
             {
-                await FadeVolume(_mainSrc, _mainSrc.volume, targetVol, fade);
+                src.volume = Mathf.Clamp01(to);
                 return;
             }
 
-            await EnsurePinned(key, clipRef);
-            var entry = _cache[key];
+            var tween = DOTween.To(() => src.volume, v => src.volume = v, Mathf.Clamp01(to), fade.Duration)
+                               .SetEase(fade.Curve ?? AnimationCurve.Linear(0, 0, 1, 1))
+                               .SetUpdate(true);
 
-            var prevKey = _currentMainKey;
-            _currentMainKey = key;
+            setTween(tween);
 
-            _mainSrc.resource = entry.handle.Result;
-            _mainSrc.loop = _loop;
-            if (!_mainSrc.isPlaying) _mainSrc.Play();
-
-            if (fade.IsInstant) _mainSrc.volume = targetVol;
-            else
+            while (tween.IsActive() && tween.IsPlaying())
             {
-                _mainSrc.volume = 0f;
-                await FadeVolume(_mainSrc, 0f, targetVol, fade);
+                await UniTask.Yield(PlayerLoopTiming.Update, _destroyToken);
+                if (src == null) break;
             }
 
-            if (!string.IsNullOrEmpty(prevKey) && prevKey != key)
-            {
-                if (!fade.IsInstant) await UniTask.Delay(TimeSpan.FromSeconds(fade.Duration), ignoreTimeScale: true);
-                Unpin(prevKey);
-            }
-        }
-        private async UniTaskVoid CoPlayOverride(AssetReferenceT<AudioResource> clipRef, FadeSettings fadeIn, OverrideMainBehavior mainBehavior, float targetVol)
-        {
-            EnsureSources();
-
-            if (_mainSrc.clip != null)
-            {
-                switch (mainBehavior)
-                {
-                    case OverrideMainBehavior.ContinueMuted:
-                        await FadeVolume(_mainSrc, _mainSrc.volume, 0f, fadeIn);
-                        break;
-                    case OverrideMainBehavior.Pause:
-                        if (!fadeIn.IsInstant)
-                        {
-                            await FadeVolume(_mainSrc, _mainSrc.volume, 0f, fadeIn);
-                        }
-                        _mainSrc.Pause();
-                        break;
-                }
-            }
-
-            var key = KeyOf(clipRef);
-            await EnsurePinned(key, clipRef);
-            var entry = _cache[key];
-
-            var prevKey = _currentOverrideKey;
-            _currentOverrideKey = key;
-
-            _overrideSrc.resource = entry.handle.Result;
-            _overrideSrc.loop = _loop;
-            _overrideSrc.volume = 0f;
-            _overrideSrc.Play();
-            await FadeVolume(_overrideSrc, 0f, targetVol, fadeIn);
-
-            if (!string.IsNullOrEmpty(prevKey) && prevKey != key)
-            {
-                if (!fadeIn.IsInstant) await UniTask.Delay(TimeSpan.FromSeconds(fadeIn.Duration), ignoreTimeScale: true);
-                Unpin(prevKey);
-            }
-        }
-        private async UniTaskVoid CoClearOverride(FadeSettings fadeOut, float resumeVol)
-        {
-            if (_overrideSrc.clip != null)
-            {
-                if (fadeOut.IsInstant) _overrideSrc.volume = 0f;
-                else await FadeVolume(_overrideSrc, _overrideSrc.volume, 0f, fadeOut);
-
-                _overrideSrc.Stop();
-                var prevKey = _currentOverrideKey;
-                _currentOverrideKey = null;
-                if (!string.IsNullOrEmpty(prevKey)) Unpin(prevKey);
-            }
-
-            if (_mainSrc.clip != null)
-            {
-                _mainSrc.UnPause();
-                await FadeVolume(_mainSrc, Mathf.Clamp01(_mainSrc.volume), resumeVol, FadeSettings.Medium);
-            }
+            if (src != null) src.volume = Mathf.Clamp01(to);
+            setTween(null);
         }
 
         private void EnsureSources()
@@ -224,6 +166,7 @@ namespace GacoGames.Audio
                 _mainSrc.outputAudioMixerGroup = _bgmGroup;
                 _mainSrc.volume = 0f;
             }
+
             if (_overrideSrc == null)
             {
                 _overrideSrc = _runner.gameObject.AddComponent<AudioSource>();
@@ -234,36 +177,25 @@ namespace GacoGames.Audio
             }
         }
 
-        private static string KeyOf(AssetReferenceT<AudioResource> r)
+        public void Dispose()
         {
-            if (r == null || !r.RuntimeKeyIsValid()) throw new ArgumentException("Invalid AudioResource reference");
-            return r.RuntimeKey.ToString();
+            _mainTween?.Kill();
+            _overrideTween?.Kill();
+            _mainSrc?.Stop();
+            _overrideSrc?.Stop();
         }
 
-        private async UniTask EnsurePinned(string key, AssetReferenceT<AudioResource> clipRef)
+        public void Play2D(AssetReferenceT<AudioResource> clip, float volume)
         {
-            if (_cache.TryGetValue(key, out var entry)) { entry.pins++; return; }
-
-            var handle = Addressables.LoadAssetAsync<AudioResource>(clipRef);
-            await handle.Task.AsUniTask().AttachExternalCancellation(_destroyToken);
-            if (handle.Status != AsyncOperationStatus.Succeeded)
-                throw new Exception($"BGM load failed: {clipRef}");
-
-            _cache[key] = new CacheEntry { handle = handle, pins = 1 };
+            throw new NotImplementedException();
         }
 
-        private void Unpin(string key)
+        public void Play3D(AssetReferenceT<AudioResource> clip, Vector3 position, float volume)
         {
-            if (!_cache.TryGetValue(key, out var entry)) return;
-            entry.pins = Mathf.Max(0, entry.pins - 1);
-            if (entry.pins <= 0 && key != _currentMainKey && key != _currentOverrideKey)
-            {
-                if (entry.handle.IsValid()) Addressables.Release(entry.handle);
-                _cache.Remove(key);
-            }
+            throw new NotImplementedException();
         }
 
-        [System.Serializable]
+        [Serializable]
         public struct FadeSettings
         {
             public float Duration;
@@ -279,51 +211,7 @@ namespace GacoGames.Audio
             public static readonly FadeSettings Instant = new FadeSettings(0f, null);
             public static readonly FadeSettings Quick = new FadeSettings(0.15f, AnimationCurve.EaseInOut(0, 0, 1, 1));
             public static readonly FadeSettings Medium = new FadeSettings(0.6f, AnimationCurve.EaseInOut(0, 0, 1, 1));
-            public static readonly FadeSettings Slow = new FadeSettings(1.5f, AnimationCurve.EaseInOut(0, 0, 1, 1));
-        }
-
-        private async UniTask FadeVolume(AudioSource src, float from, float to, FadeSettings fade)
-        {
-            if (src == null) return;
-            if (fade.IsInstant) { src.volume = to; return; }
-
-            float t = 0f;
-            from = Mathf.Clamp01(from); to = Mathf.Clamp01(to);
-            var curve = fade.Curve ?? AnimationCurve.Linear(0, 0, 1, 1);
-
-            while (t < fade.Duration && src != null)
-            {
-                float u = t / fade.Duration;
-                float k = Mathf.Clamp01(curve.Evaluate(u));
-                src.volume = Mathf.LerpUnclamped(from, to, k);
-                await UniTask.Yield(PlayerLoopTiming.Update, _destroyToken);
-                t += Time.unscaledDeltaTime;
-            }
-
-            if (src != null) src.volume = to;
-        }
-
-        public void Dispose()
-        {
-            if (_mainSrc != null) _mainSrc.Stop();
-            if (_overrideSrc != null) _overrideSrc.Stop();
-
-            foreach (var kv in _cache)
-            {
-                var h = kv.Value.handle;
-                if (h.IsValid()) Addressables.Release(h);
-            }
-            _cache.Clear();
-        }
-        
-        public void Play2D(AssetReferenceT<AudioResource> clip, float volume)
-        {
-
-        }
-
-        public void Play3D(AssetReferenceT<AudioResource> clip, Vector3 position, float volume)
-        {
-
+            public static readonly FadeSettings Slow = new FadeSettings(1.2f, AnimationCurve.EaseInOut(0, 0, 1, 1));
         }
     }
 }
