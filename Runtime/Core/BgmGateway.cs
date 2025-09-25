@@ -38,6 +38,12 @@ namespace GacoGames.Audio
 
         public void PlayMain(AssetReferenceT<AudioResource> clipRef, FadeSettings fade, bool restartIfSame = false, float targetVolume = -1f)
         {
+            if (AudioManager.AddressValid(clipRef) == false)
+            {
+                Debug.LogWarning($"BgmGateway: PlayMain called with invalid clipRef");
+                return;
+            }
+
             if (targetVolume < 0f) targetVolume = _defaultVolume;
             CoPlayMain(clipRef, fade, Mathf.Clamp01(targetVolume)).Forget();
         }
@@ -46,6 +52,12 @@ namespace GacoGames.Audio
 
         public void PlayOverride(AssetReferenceT<AudioResource> clipRef, FadeSettings fadeIn, OverrideMainBehavior mainBehavior = OverrideMainBehavior.ContinueMuted, float targetVolume = -1f)
         {
+            if (AudioManager.AddressValid(clipRef) == false)
+            {
+                Debug.LogWarning($"BgmGateway: PlayOverride called with invalid clipRef");
+                return;
+            }
+
             if (targetVolume < 0f) targetVolume = _defaultVolume;
             CoPlayOverride(clipRef, fadeIn, mainBehavior, Mathf.Clamp01(targetVolume)).Forget();
         }
@@ -67,7 +79,13 @@ namespace GacoGames.Audio
 
             var handle = Addressables.LoadAssetAsync<AudioResource>(clipRef);
             await handle.Task.AsUniTask().AttachExternalCancellation(_destroyToken);
+
             if (handle.Status != UnityEngine.ResourceManagement.AsyncOperations.AsyncOperationStatus.Succeeded) return;
+            if (handle.Result == _mainSrc.resource && _mainSrc.isPlaying)
+            {
+                // Already playing this clip
+                return;
+            }
 
             _mainSrc.resource = handle.Result;
             _mainSrc.loop = _loop;
