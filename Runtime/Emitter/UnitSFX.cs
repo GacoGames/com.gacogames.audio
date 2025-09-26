@@ -91,8 +91,18 @@ namespace GacoGames.Audio
                             overrideAttn = sfx.overrideAttn != null ? sfx.overrideAttn : database.attenuation,
                             audioClips = sfx.audioClips
                         });
+
+                        LoadAudioAsync(sfx.audioClips).Forget();
                     }
                 }
+            }
+        }
+
+        async UniTask LoadAudioAsync(List<UnitSFXAudioEntry> audioEntries)
+        {
+            foreach (var entry in audioEntries)
+            {
+                await entry.clip.LoadAssetAsync();
             }
         }
 

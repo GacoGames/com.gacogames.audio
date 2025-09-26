@@ -88,11 +88,21 @@ namespace GacoGames.Audio
                         voiceDictionary.Add(voice.id, new UnitVoiceData
                         {
                             id = voice.id,
-                            overrideAttn = voice.overrideAttn!=null? voice.overrideAttn : database.attenuation,
+                            overrideAttn = voice.overrideAttn != null ? voice.overrideAttn : database.attenuation,
                             audioClips = voice.audioClips
                         });
+
+                        LoadAudioAsync(voice.audioClips).Forget();
                     }
                 }
+            }
+        }
+
+        async UniTask LoadAudioAsync(List<UnitVoiceAudioEntry> audioEntries)
+        {
+            foreach (var entry in audioEntries)
+            {
+                await entry.clip.LoadAssetAsync();
             }
         }
 
