@@ -35,7 +35,7 @@ namespace GacoGames.Audio
         public SfxGateway Voice { get; private set; }
         public SfxGateway UI { get; private set; }
 
-        [Header("UI SFX Presets")]
+        [Header("UI SFX Presets"), TableList]
         [SerializeField] private List<UiSfxPreset> uiSfxPresets;
 
         [Header("Exposed Param Names (match AudioMixer)")]
@@ -93,9 +93,9 @@ namespace GacoGames.Audio
             return clipRef != null && clipRef.RuntimeKeyIsValid();
         }
 
-        public void PlayUiSfx(UiSFX preset)
+        public void PlayUiSfx(string presetId)
         {
-            var clip = uiSfxPresets.Find(p => p.preset == preset)?.clip;
+            var clip = uiSfxPresets.Find(p => p.id == presetId)?.clip;
             if (AddressValid(clip))
             {
                 UI.Play2D(clip);
@@ -108,15 +108,10 @@ namespace GacoGames.Audio
         void Play2D(AssetReferenceT<AudioResource> clip, float volume);
         void Play3D(AssetReferenceT<AudioResource> clip, Vector3 position, float volume);
     }
-
-    public enum UiSFX
-    {
-        ButtonClick,
-    }
     [System.Serializable]
     public class UiSfxPreset
     {
-        public UiSFX preset;
+        public string id;
         public AssetReferenceT<AudioResource> clip;
     }
 }

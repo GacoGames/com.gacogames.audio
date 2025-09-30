@@ -1,6 +1,6 @@
 {
   "name": "com.gacogames.audio",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "displayName": "Gaco Audio System",
   "description": "A modular audio system using Addressables. Includes ambient, SFX, BGM, and audio snapshots.",
   "unity": "2022.3",
